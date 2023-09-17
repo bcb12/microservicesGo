@@ -7,11 +7,9 @@ import (
 )
 
 func (app *Config) routes() http.Handler {
-	mux := http.HandlerFunc(app.Broker)
+	mux := http.NewServeMux()
 
-	heartbeatPath := "/ping"
-	muxWithHeartbeat := HeartbeatMiddleware(mux, heartbeatPath)
-
+	// Middleware para CORS
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"https://*", "http://*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -21,19 +19,42 @@ func (app *Config) routes() http.Handler {
 		MaxAge:           300,
 	})
 
-	handler := c.Handler(muxWithHeartbeat)
+	// Ruta para Broker
+	brokerHandler := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			app.Broker(w, r)
+			return
+		}
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
 
-	http.Handle("/", handler)
+	// Ruta para HandleSubmission
+	handleSubmissionHandler := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			app.HandleSubmission(w, r)
+			return
+		}
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
 
-	return handler
+	mux.HandleFunc("/", brokerHandler)
+	mux.HandleFunc("/handle", handleSubmissionHandler)
+
+	// Aplicando los middlewares
+	handlerWithCors := c.Handler(mux)
+	handlerWithHeartbeat := HeartbeatMiddleware(handlerWithCors.ServeHTTP)
+
+	return http.HandlerFunc(handlerWithHeartbeat)
 }
 
-func HeartbeatMiddleware(next http.Handler, path string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == path {
+func HeartbeatMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ping" {
+			// Aquí puedes colocar la lógica de tu middleware Heartbeat.
+			// Por ahora, sólo lo simulo con un simple Write.
 			w.Write([]byte("OK"))
 			return
 		}
-		next.ServeHTTP(w, r)
-	})
+		next(w, r)
+	}
 }
